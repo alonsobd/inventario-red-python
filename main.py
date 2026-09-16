@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 import psutil
 from ping3 import ping
+from scapy.all import ARP, Ether, srp
 
 
 INTERFACES_EXCLUIDAS = [
@@ -20,6 +21,9 @@ INTERFACES_EXCLUIDAS = [
 
 
 def obtener_redes():
+    """
+    Obtiene las interfaces IPv4 válidas.
+    """
 
     redes = []
 
@@ -58,8 +62,7 @@ def seleccionar_red():
     redes = obtener_redes()
 
     if not redes:
-
-        print("No se encontraron interfaces válidas.")
+        print("No se han encontrado interfaces válidas.")
         exit()
 
     print("\nInterfaces disponibles:\n")
@@ -74,7 +77,7 @@ def seleccionar_red():
 
     opcion = int(
         input(
-            "\nSeleccione una interfaz: "
+            "\nSelecciona una interfaz: "
         )
     )
 
@@ -98,6 +101,36 @@ def obtener_hostname(ip):
         return "Desconocido"
 
 
+def obtener_mac(ip):
+
+    try:
+
+        paquete = (
+            Ether(
+                dst="ff:ff:ff:ff:ff:ff"
+            )
+            /
+            ARP(
+                pdst=ip
+            )
+        )
+
+        resultado = srp(
+            paquete,
+            timeout=1,
+            verbose=False
+        )[0]
+
+        if resultado:
+
+            return resultado[0][1].hwsrc
+
+    except:
+        pass
+
+    return "Desconocida"
+
+
 def escanear_ip(ip):
 
     try:
@@ -110,14 +143,18 @@ def escanear_ip(ip):
         if respuesta:
 
             hostname = obtener_hostname(ip)
+            mac = obtener_mac(ip)
 
             print(
-                f"✅ {ip} - {hostname}"
+                f"✅ {ip} | "
+                f"{hostname} | "
+                f"{mac}"
             )
 
             return {
                 "IP": ip,
                 "HOSTNAME": hostname,
+                "MAC": mac,
             }
 
     except:
@@ -130,7 +167,7 @@ def escanear_red(red):
 
     dispositivos = []
 
-    lista_ips = [
+    ips = [
         f"{red}.{i}"
         for i in range(1, 255)
     ]
@@ -139,17 +176,19 @@ def escanear_red(red):
         max_workers=100
     ) as executor:
 
-        resultados = executor.map(
-            escanear_ip,
-            lista_ips
+        resultados = list(
+            executor.map(
+                escanear_ip,
+                ips
+            )
         )
 
-        for resultado in resultados:
+    for resultado in resultados:
 
-            if resultado:
-                dispositivos.append(
-                    resultado
-                )
+        if resultado:
+            dispositivos.append(
+                resultado
+            )
 
     return dispositivos
 
@@ -170,6 +209,18 @@ def exportar_excel(dispositivos):
     )
 
     return nombre_archivo
+
+
+def mostrar_resumen(dispositivos):
+
+    print("\n" + "=" * 60)
+    print("RESUMEN")
+    print("=" * 60)
+
+    print(
+        f"Dispositivos encontrados: "
+        f"{len(dispositivos)}"
+    )
 
 
 def main():
@@ -198,17 +249,12 @@ def main():
         dispositivos
     )
 
-    print("\n" + "=" * 60)
-    print("RESUMEN")
-    print("=" * 60)
-
-    print(
-        f"Dispositivos encontrados: "
-        f"{len(dispositivos)}"
+    mostrar_resumen(
+        dispositivos
     )
 
     print(
-        f"Excel generado: "
+        f"\nExcel generado: "
         f"{archivo}"
     )
 
