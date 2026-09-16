@@ -1,8 +1,12 @@
 venv/
 __pycache__/
-*.pyc
 
-inventario.db
-inventario*.xlsx
+*.xlsx
+*.csv
+
+*.db
 
 .vscode/
+.idea/
+
+*.pyc
