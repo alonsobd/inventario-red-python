@@ -1,5 +1,6 @@
 import socket
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 import pandas as pd
 import psutil
@@ -207,21 +208,34 @@ def escanear_red(red):
 
 def exportar_excel(dispositivos):
 
-    df = pd.DataFrame(
-        dispositivos
-    )
+    if not dispositivos:
 
-    df = df.sort_values(
-        by="IP"
+        print(
+            "\nNo se encontraron dispositivos."
+        )
+
+        return None
+
+    fecha_hora = datetime.now().strftime(
+        "%Y%m%d_%H%M%S"
     )
 
     nombre_archivo = (
-        "inventario.xlsx"
+        f"inventario_{fecha_hora}.xlsx"
+    )
+
+    df = pd.DataFrame(
+        dispositivos
     )
 
     df.to_excel(
         nombre_archivo,
         index=False
+    )
+
+    print(
+        f"\nExcel generado correctamente: "
+        f"{nombre_archivo}"
     )
 
     return nombre_archivo
@@ -270,6 +284,14 @@ def main():
     )
 
     dispositivos = escanear_red(red)
+
+    if not dispositivos:
+
+        print(
+            "\nNo se encontraron dispositivos."
+        )
+
+        return
 
     archivo = exportar_excel(
         dispositivos
