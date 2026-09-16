@@ -8,5 +8,5 @@ __pycache__/
 
 .vscode/
 .idea/
-
+*.log
 *.pyc
