@@ -1,269 +1,202 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from ping3 import ping
+import socket
+from concurrent.futures import ThreadPoolExecutor
 
-import ipaddress
 import pandas as pd
 import psutil
-import socket
-import logging
-import time
+from ping3 import ping
 
 
-# ==================================================
-# CONFIGURACIÓN
-# ==================================================
+INTERFACES_EXCLUIDAS = [
+    "loopback",
+    "cisco",
+    "anyconnect",
+    "vpn",
+    "tailscale",
+    "vmware",
+    "hyper-v",
+    "virtualbox",
+    "vethernet",
+]
 
-MAX_THREADS = 100
-EXCEL_FILE = "inventario.xlsx"
-LOG_FILE = "inventario.log"
-
-
-# ==================================================
-# LOGGING
-# ==================================================
-
-logging.basicConfig(
-    filename=LOG_FILE,
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
-
-# ==================================================
-# REDES
-# ==================================================
 
 def obtener_redes():
-    """
-    Detecta todas las redes IPv4 activas.
-    """
 
     redes = []
 
-    interfaces = psutil.net_if_addrs()
+    for interfaz, direcciones in psutil.net_if_addrs().items():
 
-    for nombre, direcciones in interfaces.items():
+        if any(
+            palabra in interfaz.lower()
+            for palabra in INTERFACES_EXCLUIDAS
+        ):
+            continue
 
         for direccion in direcciones:
 
             if direccion.family == socket.AF_INET:
 
                 ip = direccion.address
-                mascara = direccion.netmask
 
-                if not mascara:
+                if (
+                    ip.startswith("127.")
+                    or ip.startswith("169.254.")
+                ):
                     continue
 
-                try:
-
-                    red = ipaddress.IPv4Network(
-                        f"{ip}/{mascara}",
-                        strict=False
-                    )
-
-                    redes.append(
-                        {
-                            "interfaz": nombre,
-                            "ip": ip,
-                            "red": red
-                        }
-                    )
-
-                except Exception as error:
-
-                    logging.warning(
-                        f"Error procesando interfaz "
-                        f"{nombre}: {error}"
-                    )
+                redes.append(
+                    {
+                        "interfaz": interfaz,
+                        "ip": ip,
+                    }
+                )
 
     return redes
 
 
-# ==================================================
-# HOSTNAME
-# ==================================================
-
-def obtener_hostname(ip):
-
-    try:
-        return socket.gethostbyaddr(ip)[0]
-    except Exception:
-        return "Desconocido"
-
-
-# ==================================================
-# PING
-# ==================================================
-
-def comprobar_host(ip):
-
-    try:
-
-        respuesta = ping(
-            str(ip),
-            timeout=0.5
-        )
-
-        if respuesta:
-
-            hostname = obtener_hostname(str(ip))
-
-            return {
-                "IP": str(ip),
-                "HOSTNAME": hostname
-            }
-
-    except Exception:
-        pass
-
-    return None
-
-
-# ==================================================
-# ESCANEO
-# ==================================================
-
-def escanear_red(red):
-
-    dispositivos = []
-
-    hosts = list(red.hosts())
-
-    print(f"\nEscaneando red {red}")
-
-    with ThreadPoolExecutor(
-        max_workers=MAX_THREADS
-    ) as executor:
-
-        futuras = {
-            executor.submit(
-                comprobar_host,
-                host
-            ): host
-            for host in hosts
-        }
-
-        for tarea in as_completed(futuras):
-
-            resultado = tarea.result()
-
-            if resultado:
-
-                dispositivos.append(resultado)
-
-                print(
-                    f"✅ {resultado['IP']} - "
-                    f"{resultado['HOSTNAME']}"
-                )
-
-    return dispositivos
-
-
-# ==================================================
-# EXCEL
-# ==================================================
-
-def exportar_excel(dispositivos):
-
-    df = pd.DataFrame(dispositivos)
-
-    if len(df) == 0:
-
-        print("\nNo se encontraron dispositivos")
-
-        return
-
-    df = df.sort_values(
-        by=["IP"]
-    )
-
-    df.to_excel(
-        EXCEL_FILE,
-        index=False
-    )
-
-    print(
-        f"\nExcel generado: "
-        f"{EXCEL_FILE}"
-    )
-
-
-# ==================================================
-# MAIN
-# ==================================================
-
-def main():
-
-    inicio = time.time()
-
-    print("=" * 60)
-    print("INVENTARIO DE RED")
-    print("=" * 60)
-
-    logging.info(
-        "Inicio de escaneo"
-    )
+def seleccionar_red():
 
     redes = obtener_redes()
 
     if not redes:
 
-        print(
-            "No se encontraron "
-            "redes activas"
-        )
+        print("No se encontraron interfaces válidas.")
+        exit()
 
-        return
+    print("\nInterfaces disponibles:\n")
 
-    print("\nRedes detectadas:\n")
-
-    for red in redes:
+    for indice, red in enumerate(redes, start=1):
 
         print(
+            f"{indice}. "
             f"{red['interfaz']} -> "
-            f"{red['red']}"
+            f"{red['ip']}"
         )
 
-    dispositivos_totales = []
-
-    for red in redes:
-
-        try:
-
-            encontrados = escanear_red(
-                red["red"]
-            )
-
-            dispositivos_totales.extend(
-                encontrados
-            )
-
-        except Exception as error:
-
-            logging.error(
-                f"Error escaneando "
-                f"{red['red']}: {error}"
-            )
-
-    # Eliminar duplicados
-
-    unicos = {}
-
-    for dispositivo in dispositivos_totales:
-
-        unicos[
-            dispositivo["IP"]
-        ] = dispositivo
-
-    dispositivos_totales = list(
-        unicos.values()
+    opcion = int(
+        input(
+            "\nSeleccione una interfaz: "
+        )
     )
 
-    exportar_excel(
-        dispositivos_totales
+    seleccionada = redes[opcion - 1]
+
+    ip_local = seleccionada["ip"]
+
+    red = ".".join(
+        ip_local.split(".")[:3]
     )
 
-    fin = time.time()
+    return ip_local, red
+
+
+def obtener_hostname(ip):
+
+    try:
+        return socket.gethostbyaddr(ip)[0]
+
+    except:
+        return "Desconocido"
+
+
+def escanear_ip(ip):
+
+    try:
+
+        respuesta = ping(
+            ip,
+            timeout=0.05
+        )
+
+        if respuesta:
+
+            hostname = obtener_hostname(ip)
+
+            print(
+                f"✅ {ip} - {hostname}"
+            )
+
+            return {
+                "IP": ip,
+                "HOSTNAME": hostname,
+            }
+
+    except:
+        pass
+
+    return None
+
+
+def escanear_red(red):
+
+    dispositivos = []
+
+    lista_ips = [
+        f"{red}.{i}"
+        for i in range(1, 255)
+    ]
+
+    with ThreadPoolExecutor(
+        max_workers=100
+    ) as executor:
+
+        resultados = executor.map(
+            escanear_ip,
+            lista_ips
+        )
+
+        for resultado in resultados:
+
+            if resultado:
+                dispositivos.append(
+                    resultado
+                )
+
+    return dispositivos
+
+
+def exportar_excel(dispositivos):
+
+    nombre_archivo = (
+        "inventario.xlsx"
+    )
+
+    df = pd.DataFrame(
+        dispositivos
+    )
+
+    df.to_excel(
+        nombre_archivo,
+        index=False
+    )
+
+    return nombre_archivo
+
+
+def main():
+
+    print("=" * 60)
+    print("INVENTARIO DE RED")
+    print("=" * 60)
+
+    ip_local, red = seleccionar_red()
+
+    print(
+        f"\nIP seleccionada: "
+        f"{ip_local}"
+    )
+
+    print(
+        f"Red detectada: "
+        f"{red}.0/24"
+    )
+
+    dispositivos = escanear_red(
+        red
+    )
+
+    archivo = exportar_excel(
+        dispositivos
+    )
 
     print("\n" + "=" * 60)
     print("RESUMEN")
@@ -271,18 +204,12 @@ def main():
 
     print(
         f"Dispositivos encontrados: "
-        f"{len(dispositivos_totales)}"
+        f"{len(dispositivos)}"
     )
 
     print(
-        f"Tiempo empleado: "
-        f"{round(fin - inicio, 2)} segundos"
-    )
-
-    logging.info(
-        f"Escaneo finalizado. "
-        f"{len(dispositivos_totales)} "
-        f"equipos encontrados."
+        f"Excel generado: "
+        f"{archivo}"
     )
 
 
