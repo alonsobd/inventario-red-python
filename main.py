@@ -1,9 +1,12 @@
 import socket
+import sqlite3
+
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import pandas as pd
 import psutil
+
 from ping3 import ping
 from scapy.all import ARP, Ether, srp
 
@@ -22,6 +25,169 @@ INTERFACES_EXCLUIDAS = [
     "vethernet",
 ]
 
+
+def crear_base_datos():
+
+    conexion = sqlite3.connect(
+        "inventario.db"
+    )
+
+    cursor = conexion.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS escaneos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT,
+            interfaz TEXT,
+            red TEXT
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS dispositivos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            escaneo_id INTEGER,
+            ip TEXT,
+            hostname TEXT,
+            mac TEXT,
+            fabricante TEXT,
+            FOREIGN KEY (escaneo_id)
+            REFERENCES escaneos(id)
+        )
+    """)
+
+    conexion.commit()
+    conexion.close()
+def crear_escaneo(
+    interfaz,
+    red
+):
+
+    conexion = sqlite3.connect(
+        "inventario.db"
+    )
+
+    cursor = conexion.cursor()
+
+    fecha = datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    cursor.execute(
+        """
+        INSERT INTO escaneos(
+            fecha,
+            interfaz,
+            red
+        )
+        VALUES (?, ?, ?)
+        """,
+        (
+            fecha,
+            interfaz,
+            red
+        )
+    )
+
+    escaneo_id = cursor.lastrowid
+
+    conexion.commit()
+    conexion.close()
+
+    return escaneo_id
+
+def guardar_en_bd(
+    escaneo_id,
+    dispositivos
+):
+
+    conexion = sqlite3.connect(
+        "inventario.db"
+    )
+
+    cursor = conexion.cursor()
+
+    for dispositivo in dispositivos:
+
+        cursor.execute(
+            """
+            INSERT INTO dispositivos
+            (
+                escaneo_id,
+                ip,
+                hostname,
+                mac,
+                fabricante
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                escaneo_id,
+                dispositivo["IP"],
+                dispositivo["HOSTNAME"],
+                dispositivo["MAC"],
+                dispositivo["FABRICANTE"]
+            )
+        )
+
+    conexion.commit()
+    conexion.close()
+
+def obtener_ips_ultimo_escaneo():
+
+    conexion = sqlite3.connect(
+        "inventario.db"
+    )
+
+    cursor = conexion.cursor()
+
+    cursor.execute("""
+        SELECT id
+        FROM escaneos
+        ORDER BY id DESC
+        LIMIT 2
+    """)
+
+    escaneos = cursor.fetchall()
+
+    if len(escaneos) < 2:
+
+        conexion.close()
+
+        return set()
+
+    escaneo_anterior = escaneos[1][0]
+
+    cursor.execute("""
+        SELECT ip
+        FROM dispositivos
+        WHERE escaneo_id = ?
+    """, (escaneo_anterior,))
+
+    resultado = {
+        fila[0]
+        for fila in cursor.fetchall()
+    }
+
+    conexion.close()
+
+    return resultado
+
+def detectar_nuevos(dispositivos):
+
+    ips_anteriores = (
+        obtener_ips_ultimo_escaneo()
+    )
+
+    return [
+
+        dispositivo
+
+        for dispositivo in dispositivos
+
+        if dispositivo["IP"]
+        not in ips_anteriores
+    ]
 
 def obtener_redes():
 
@@ -50,7 +216,7 @@ def obtener_redes():
                 redes.append(
                     {
                         "interfaz": interfaz,
-                        "ip": ip,
+                        "ip": ip
                     }
                 )
 
@@ -62,12 +228,19 @@ def seleccionar_red():
     redes = obtener_redes()
 
     if not redes:
-        print("No se han encontrado interfaces válidas.")
-        exit()
+
+        print(
+            "No se encontraron interfaces válidas."
+        )
+
+        raise SystemExit
 
     print("\nInterfaces disponibles:\n")
 
-    for indice, red in enumerate(redes, start=1):
+    for indice, red in enumerate(
+        redes,
+        start=1
+    ):
 
         print(
             f"{indice}. "
@@ -75,13 +248,32 @@ def seleccionar_red():
             f"{red['ip']}"
         )
 
-    opcion = int(
-        input(
-            "\nSelecciona una interfaz: "
-        )
-    )
+    while True:
 
-    seleccionada = redes[opcion - 1]
+        try:
+
+            opcion = int(
+                input(
+                    "\nSelecciona una interfaz: "
+                )
+            )
+
+            if 1 <= opcion <= len(redes):
+                break
+
+            print(
+                "Opción no válida."
+            )
+
+        except ValueError:
+
+            print(
+                "Introduce un número."
+            )
+
+    seleccionada = redes[
+        opcion - 1
+    ]
 
     ip_local = seleccionada["ip"]
 
@@ -89,7 +281,11 @@ def seleccionar_red():
         ip_local.split(".")[:3]
     )
 
-    return ip_local, red
+    return (
+    seleccionada["interfaz"],
+    ip_local,
+    red
+)
 
 
 def obtener_hostname(ip):
@@ -97,7 +293,7 @@ def obtener_hostname(ip):
     try:
         return socket.gethostbyaddr(ip)[0]
 
-    except:
+    except Exception:
         return "Desconocido"
 
 
@@ -106,7 +302,9 @@ def obtener_mac(ip):
     try:
 
         paquete = (
-            Ether(dst="ff:ff:ff:ff:ff:ff")
+            Ether(
+                dst="ff:ff:ff:ff:ff:ff"
+            )
             /
             ARP(pdst=ip)
         )
@@ -118,9 +316,14 @@ def obtener_mac(ip):
         )[0]
 
         if resultado:
-            return resultado[0][1].hwsrc.upper()
 
-    except:
+            return (
+                resultado[0][1]
+                .hwsrc
+                .upper()
+            )
+
+    except Exception:
         pass
 
     return "Desconocida"
@@ -131,7 +334,7 @@ def obtener_fabricante(mac):
     if mac == "Desconocida":
         return "Desconocido"
 
-    prefijo = mac.upper()[0:8]
+    prefijo = mac[0:8]
 
     return FABRICANTES.get(
         prefijo,
@@ -145,16 +348,24 @@ def escanear_ip(ip):
 
         respuesta = ping(
             ip,
-            timeout=0.05
+            timeout=0.1
         )
 
         if respuesta:
 
-            hostname = obtener_hostname(ip)
+            hostname = obtener_hostname(
+                ip
+            )
 
-            mac = obtener_mac(ip)
+            mac = obtener_mac(
+                ip
+            )
 
-            fabricante = obtener_fabricante(mac)
+            fabricante = (
+                obtener_fabricante(
+                    mac
+                )
+            )
 
             print(
                 f"✅ {ip} | "
@@ -167,10 +378,10 @@ def escanear_ip(ip):
                 "IP": ip,
                 "HOSTNAME": hostname,
                 "MAC": mac,
-                "FABRICANTE": fabricante,
+                "FABRICANTE": fabricante
             }
 
-    except:
+    except Exception:
         pass
 
     return None
@@ -199,6 +410,7 @@ def escanear_red(red):
     for resultado in resultados:
 
         if resultado:
+
             dispositivos.append(
                 resultado
             )
@@ -209,10 +421,6 @@ def escanear_red(red):
 def exportar_excel(dispositivos):
 
     if not dispositivos:
-
-        print(
-            "\nNo se encontraron dispositivos."
-        )
 
         return None
 
@@ -228,14 +436,11 @@ def exportar_excel(dispositivos):
         dispositivos
     )
 
-    df.to_excel(
+    df.sort_values(
+        by="IP"
+    ).to_excel(
         nombre_archivo,
         index=False
-    )
-
-    print(
-        f"\nExcel generado correctamente: "
-        f"{nombre_archivo}"
     )
 
     return nombre_archivo
@@ -247,31 +452,42 @@ def mostrar_estadisticas(dispositivos):
 
     for dispositivo in dispositivos:
 
-        fabricante = dispositivo["FABRICANTE"]
+        fabricante = dispositivo[
+            "FABRICANTE"
+        ]
 
-        fabricantes[fabricante] = (
+        fabricantes[
+            fabricante
+        ] = (
             fabricantes.get(
                 fabricante,
                 0
             ) + 1
         )
 
-    print("\nFabricantes encontrados:\n")
+    print(
+        "\nFabricantes encontrados:\n"
+    )
 
-    for fabricante, cantidad in fabricantes.items():
+    for fabricante, cantidad in sorted(
+        fabricantes.items()
+    ):
 
         print(
-            f"{fabricante}: {cantidad}"
+            f"{fabricante}: "
+            f"{cantidad}"
         )
 
 
 def main():
 
+    crear_base_datos()
+
     print("=" * 60)
-    print("INVENTARIO DE RED")
+    print("INVENTARIO DE RED V6")
     print("=" * 60)
 
-    ip_local, red = seleccionar_red()
+    interfaz, ip_local, red = seleccionar_red()
 
     print(
         f"\nIP seleccionada: "
@@ -283,7 +499,13 @@ def main():
         f"{red}.0/24"
     )
 
-    dispositivos = escanear_red(red)
+    dispositivos = escanear_red(
+        red
+    )
+    escaneo_id = crear_escaneo(
+    interfaz,
+    red
+    )
 
     if not dispositivos:
 
@@ -292,6 +514,15 @@ def main():
         )
 
         return
+
+    nuevos = detectar_nuevos(
+        dispositivos
+    )
+
+    guardar_en_bd(
+    escaneo_id,
+    dispositivos
+    )
 
     archivo = exportar_excel(
         dispositivos
@@ -306,6 +537,24 @@ def main():
         f"{len(dispositivos)}"
     )
 
+    print(
+        f"Dispositivos nuevos: "
+        f"{len(nuevos)}"
+    )
+
+    if nuevos:
+
+        print(
+            "\nNuevos dispositivos:"
+        )
+
+        for dispositivo in nuevos:
+
+            print(
+                f"- {dispositivo['IP']} "
+                f"({dispositivo['HOSTNAME']})"
+            )
+
     mostrar_estadisticas(
         dispositivos
     )
@@ -313,6 +562,10 @@ def main():
     print(
         f"\nExcel generado: "
         f"{archivo}"
+    )
+
+    print(
+        "Base de datos: inventario.db"
     )
 
 

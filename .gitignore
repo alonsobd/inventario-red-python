@@ -2,7 +2,7 @@ venv/
 __pycache__/
 *.pyc
 
-inventario.xlsx
-inventario.log
+inventario.db
+inventario*.xlsx
 
 .vscode/
