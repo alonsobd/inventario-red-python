@@ -6,6 +6,8 @@ import psutil
 from ping3 import ping
 from scapy.all import ARP, Ether, srp
 
+from fabricantes import FABRICANTES
+
 
 INTERFACES_EXCLUIDAS = [
     "loopback",
@@ -21,9 +23,6 @@ INTERFACES_EXCLUIDAS = [
 
 
 def obtener_redes():
-    """
-    Obtiene las interfaces IPv4 válidas.
-    """
 
     redes = []
 
@@ -106,13 +105,9 @@ def obtener_mac(ip):
     try:
 
         paquete = (
-            Ether(
-                dst="ff:ff:ff:ff:ff:ff"
-            )
+            Ether(dst="ff:ff:ff:ff:ff:ff")
             /
-            ARP(
-                pdst=ip
-            )
+            ARP(pdst=ip)
         )
 
         resultado = srp(
@@ -122,13 +117,25 @@ def obtener_mac(ip):
         )[0]
 
         if resultado:
-
-            return resultado[0][1].hwsrc
+            return resultado[0][1].hwsrc.upper()
 
     except:
         pass
 
     return "Desconocida"
+
+
+def obtener_fabricante(mac):
+
+    if mac == "Desconocida":
+        return "Desconocido"
+
+    prefijo = mac.upper()[0:8]
+
+    return FABRICANTES.get(
+        prefijo,
+        "Desconocido"
+    )
 
 
 def escanear_ip(ip):
@@ -143,18 +150,23 @@ def escanear_ip(ip):
         if respuesta:
 
             hostname = obtener_hostname(ip)
+
             mac = obtener_mac(ip)
+
+            fabricante = obtener_fabricante(mac)
 
             print(
                 f"✅ {ip} | "
                 f"{hostname} | "
-                f"{mac}"
+                f"{mac} | "
+                f"{fabricante}"
             )
 
             return {
                 "IP": ip,
                 "HOSTNAME": hostname,
                 "MAC": mac,
+                "FABRICANTE": fabricante,
             }
 
     except:
@@ -195,12 +207,16 @@ def escanear_red(red):
 
 def exportar_excel(dispositivos):
 
-    nombre_archivo = (
-        "inventario.xlsx"
-    )
-
     df = pd.DataFrame(
         dispositivos
+    )
+
+    df = df.sort_values(
+        by="IP"
+    )
+
+    nombre_archivo = (
+        "inventario.xlsx"
     )
 
     df.to_excel(
@@ -211,16 +227,28 @@ def exportar_excel(dispositivos):
     return nombre_archivo
 
 
-def mostrar_resumen(dispositivos):
+def mostrar_estadisticas(dispositivos):
 
-    print("\n" + "=" * 60)
-    print("RESUMEN")
-    print("=" * 60)
+    fabricantes = {}
 
-    print(
-        f"Dispositivos encontrados: "
-        f"{len(dispositivos)}"
-    )
+    for dispositivo in dispositivos:
+
+        fabricante = dispositivo["FABRICANTE"]
+
+        fabricantes[fabricante] = (
+            fabricantes.get(
+                fabricante,
+                0
+            ) + 1
+        )
+
+    print("\nFabricantes encontrados:\n")
+
+    for fabricante, cantidad in fabricantes.items():
+
+        print(
+            f"{fabricante}: {cantidad}"
+        )
 
 
 def main():
@@ -241,15 +269,22 @@ def main():
         f"{red}.0/24"
     )
 
-    dispositivos = escanear_red(
-        red
-    )
+    dispositivos = escanear_red(red)
 
     archivo = exportar_excel(
         dispositivos
     )
 
-    mostrar_resumen(
+    print("\n" + "=" * 60)
+    print("RESUMEN")
+    print("=" * 60)
+
+    print(
+        f"Dispositivos encontrados: "
+        f"{len(dispositivos)}"
+    )
+
+    mostrar_estadisticas(
         dispositivos
     )
 
